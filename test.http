@@ -1,0 +1,3 @@
+curl --location 'http://127.0.0.1:8080/auth/login' \
+--header 'Content-Type: application/json' \
+--data '{"username":"student","password":"Workshop123!","client":"angular-workshop"}'
