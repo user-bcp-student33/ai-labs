@@ -37,3 +37,29 @@ y `auth/src/main/java/com/bcp/workshop/auth/AuthService.java:14-20`.
 | H-AUTH-07 | auth | AuthResource concentra validación, acceso a datos, generación de token y respuesta | Refactor | El flujo original combinaba validación, persistencia, negocio y respuesta. H-AUTH-02 separó la consulta/verificación en `AuthService`, pero la validación HTTP, creación del token y serialización siguen en el recurso; permanece Pendiente fuera de la selección. | `auth/src/main/java/com/bcp/workshop/auth/AuthResource.java:28-56`; `auth/src/main/java/com/bcp/workshop/auth/AuthService.java:14-20` | baja | Pendiente |
 
 Los siete candidatos del bloque `auth` de `RETO.md` tienen evidencia en el código o en su historial. H-AUTH-03 permanece Pendiente hasta verificar validación de firma en consumidores fuera del alcance. La aplicabilidad de advisories SCA (H-AUTH-06) sigue pendiente; CodeQL y Dependency Review remotos no se ejecutaron en este recorrido local. Las pruebas y coberturas están registradas en `PLAN.md`.
+
+### Candidatos de discovery bajo H-AUTH-03
+
+#### H-AUTH-03-01 — Las cuentas de demostración se crean también en producción
+- Estado: CANDIDATO
+- Evidencia: `auth/src/main/java/com/bcp/workshop/auth/LegacyDatabase.java:30-34,62-69` inicializa la base al iniciar la aplicación e inserta las cuentas `student` / `Workshop123!` y `trainer` / `Trainer123!` sin comprobar el perfil activo; `auth/src/main/resources/application.properties:3` configura el host de producción como `0.0.0.0`. La prueba `auth/src/test/java/com/bcp/workshop/auth/AuthResourceTest.java:280-295` confirma que una base nueva recibe la cuenta de demostración en la inicialización.
+- Impacto: si el despliegue de producción inicia con una base vacía o sin esos usernames y no los elimina o reemplaza externamente, quedan credenciales conocidas habilitadas en un servicio expuesto por la interfaz de red de producción.
+- Prioridad propuesta: alta, condicionada a confirmar la configuración y el ciclo de vida de la base productiva.
+- Contrato potencialmente afectado: política de aprovisionamiento de cuentas y autenticación de `POST /auth/login`; un inicio válido inesperado podría dar acceso con rol `STUDENT` o `TRAINER`.
+- Cómo validarlo: en un despliegue aislado con perfil `%prod` y una base temporal vacía, comprobar si se insertan ambas cuentas y si autentican; después verificar que el despliegue real tenga un mecanismo aprobado para impedir o retirar esas cuentas.
+
+#### H-AUTH-03-02 — El flujo de login no aplica limitación de intentos en `auth`
+- Estado: CANDIDATO
+- Evidencia: `AuthResource.login` procesa cada solicitud y llama a `AuthService.authenticate` (`auth/src/main/java/com/bcp/workshop/auth/AuthResource.java:32-49`); para un usuario existente, `AuthService` verifica cada contraseña (`auth/src/main/java/com/bcp/workshop/auth/AuthService.java:14-17`) mediante PBKDF2 con `600000` iteraciones (`auth/src/main/java/com/bcp/workshop/auth/PasswordHasher.java:18,89-93`). La búsqueda `rg -n -i "\b(rate.?limit|throttl|lockout|failed.?attempts)\b|@RateLimit" auth/src/main` no encontró controles de este tipo en el componente.
+- Impacto: sin una protección equivalente en el proxy o gateway, los intentos repetidos podrían facilitar ataques de adivinación de credenciales y consumir CPU del servicio; no se inspeccionó infraestructura externa a `auth/`.
+- Prioridad propuesta: media, pendiente de verificar controles en el punto de entrada del despliegue.
+- Contrato potencialmente afectado: disponibilidad y comportamiento de error de `POST /auth/login`; un control futuro podría introducir respuestas `429` o demoras, aún no especificadas en el contrato observado.
+- Cómo validarlo: ejecutar una prueba de carga pequeña y acotada contra una instancia aislada con base temporal, midiendo recursos y respuestas ante intentos fallidos; inspeccionar además la configuración efectiva del gateway/proxy y acordar límites antes de fijar casos de `429`.
+
+#### H-AUTH-03-03 — El request de login no declara límites de tamaño para las credenciales
+- Estado: CANDIDATO
+- Evidencia: `auth/src/main/java/com/bcp/workshop/auth/LoginRequest.java:3-5` declara `username` y `password` como `String` sin restricciones; `AuthResource.java:36-44` solo rechaza valores nulos o en blanco. La contraseña se convierte en `char[]` y se entrega a `PBEKeySpec` en `PasswordHasher.java:89-93`; no se encontró configuración de tamaño de body en `auth/src/main/resources/application.properties`.
+- Impacto: si el límite de body del framework o de la infraestructura no restringe suficientemente la entrada, valores excesivamente grandes pueden aumentar memoria y trabajo por solicitud antes de que el login falle.
+- Prioridad propuesta: media, condicionada a los límites efectivos del framework y del despliegue.
+- Contrato potencialmente afectado: esquema y validación de `POST /auth/login`; los límites y respuestas para credenciales demasiado grandes no están definidos en el contrato observado.
+- Cómo validarlo: confirmar primero los límites efectivos de Quarkus y del proxy; en una instancia aislada, probar valores justo debajo y encima de los límites acordados y verificar respuesta, uso de recursos y que no se registren contraseñas.
