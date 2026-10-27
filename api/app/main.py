@@ -7,7 +7,7 @@ from typing import Any
 
 import jwt
 import urllib3
-from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 TOKEN_SECRET_ENV = "AUTH_TOKEN_SECRET"
@@ -70,10 +70,9 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         return verify_bearer_token(authorization, token_secret)
 
     @app.get("/api/tasks")
-    def list_tasks(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(current_identity)) -> list[dict[str, Any]]:
-        requested_owner = owner or identity["username"]
+    def list_tasks(identity: dict[str, str] = Depends(current_identity)) -> list[dict[str, Any]]:
         sql = "SELECT id,title,description,status,owner,priority,created_at FROM tasks WHERE owner = ? ORDER BY id"
-        rows = connection.execute(sql, (requested_owner,)).fetchall()
+        rows = connection.execute(sql, (identity["username"],)).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
             result.append(as_task(row))
@@ -85,18 +84,17 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         description = str(payload.get("description", ""))
         status = str(payload.get("status", "TODO"))
         priority = str(payload.get("priority", "MEDIUM"))
-        owner = str(payload.get("owner", identity["username"]))
         sql = "INSERT INTO tasks(title,description,status,owner,priority,created_at) VALUES (?,?,?,?,?,datetime('now'))"
-        cursor = connection.execute(sql, (title, description, status, owner, priority))
+        cursor = connection.execute(sql, (title, description, status, identity["username"], priority))
         connection.commit()
         row = connection.execute("SELECT id,title,description,status,owner,priority,created_at FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return as_task(row)
 
     @app.get("/api/summary")
-    def summary(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(current_identity)) -> dict[str, Any]:
-        requested_owner = owner or identity["username"]
-        rows = connection.execute("SELECT status,priority FROM tasks WHERE owner = ?", (requested_owner,)).fetchall()
-        response: dict[str, Any] = {"owner": requested_owner, "total": 0, "byStatus": {}, "highPriorityOpen": 0}
+    def summary(identity: dict[str, str] = Depends(current_identity)) -> dict[str, Any]:
+        owner = identity["username"]
+        rows = connection.execute("SELECT status,priority FROM tasks WHERE owner = ?", (owner,)).fetchall()
+        response: dict[str, Any] = {"owner": owner, "total": 0, "byStatus": {}, "highPriorityOpen": 0}
         for row in rows:
             response["total"] = response["total"] + 1
             if row["status"] in response["byStatus"]:

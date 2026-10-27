@@ -231,15 +231,18 @@ siguen fuera de alcance (H-AUTH-06).
 CodeQL reportó tres alertas High en `api/app/main.py` (consultas de
 `/api/tasks`, `POST /api/tasks` y `/api/summary`). Las tres consultas usan ahora
 placeholders `?` con tupla de parámetros. El comportamiento con entradas
-normales no cambia. Se añadieron dos pruebas: `owner` con `x' OR '1'='1'` no
-devuelve filas, y un `title` con comillas y `DROP TABLE` se guarda como texto.
-Resultado local: `python tools/lab.py test api` pasó con 25 pruebas y cobertura
-93.10%; pyflakes sin hallazgos. No se verificó que las pruebas nuevas fallen
-sobre el código anterior. La alerta se cierra solo cuando CodeQL reanalice el
-nuevo commit.
+normales no cambia. Por la política de `owner` aprobada, `/api/tasks`,
+`POST /api/tasks` y `/api/summary` usan siempre la identidad del token: `?owner=`
+y el campo `owner` del payload se ignoran. Se añadieron dos pruebas: `?owner=`
+con `x' OR '1'='1'` y un payload con `owner` ajeno no cambian el resultado; un
+`title` con comillas y `DROP TABLE` se guarda como texto. Resultado local:
+`python tools/lab.py test api` pasó con 25 pruebas y cobertura 92.98%; pyflakes
+sin hallazgos. No se verificó que las pruebas nuevas fallen sobre el código
+anterior. La alerta se cierra solo cuando CodeQL reanalice el nuevo commit.
 
-Limitaciones que siguen abiertas: la política de `owner` en query/payload no
-está resuelta por H-AUTH-03; la raíz de la inyección es H-AUTH-01 (Pendiente).
+Limitaciones que siguen abiertas: la raíz de la inyección es H-AUTH-01
+(Pendiente). `web` todavía envía `?owner=`, que ahora se ignora; limpiarlo es un
+cambio separado en `web`.
 
 #### Estrategia de reversión (propuesta)
 

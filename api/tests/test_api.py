@@ -74,15 +74,21 @@ def test_creates_task_and_summary(tmp_path: Path) -> None:
     assert summary.json()["total"] == 3
 
 
-def test_owner_filter_treats_sql_input_as_literal(tmp_path: Path) -> None:
+def test_owner_query_and_payload_are_ignored(tmp_path: Path) -> None:
     app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
     with TestClient(app) as client:
         tasks = client.get("/api/tasks", params={"owner": "x' OR '1'='1"}, headers=headers())
-        summary = client.get("/api/summary", params={"owner": "x' OR '1'='1"}, headers=headers())
+        summary = client.get("/api/summary", params={"owner": "trainer"}, headers=headers())
+        created = client.post(
+            "/api/tasks",
+            headers=headers(),
+            json={"title": "Ajena", "description": "d", "status": "TODO", "priority": "LOW", "owner": "trainer"},
+        )
     assert tasks.status_code == 200
-    assert tasks.json() == []
-    assert summary.status_code == 200
-    assert summary.json()["total"] == 0
+    assert len(tasks.json()) == 2
+    assert all(task["owner"] == "student" for task in tasks.json())
+    assert summary.json()["owner"] == "student"
+    assert created.json()["owner"] == "student"
 
 
 def test_create_task_stores_sql_metacharacters_literally(tmp_path: Path) -> None:

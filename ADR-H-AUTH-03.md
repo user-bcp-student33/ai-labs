@@ -1,6 +1,6 @@
 # Propuesta de decisión arquitectónica — H-AUTH-03
 
-**Estado:** propuesta para revisión humana; no implementar hasta su aprobación.  
+**Estado:** aprobada por el usuario tal como está redactada (sesión del día 2).  
 **Entrada:** [HU-01 — Validación de firma del token de autenticación](./HU-01.md).
 
 ## Impacto
