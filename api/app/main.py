@@ -1,34 +1,36 @@
 from __future__ import annotations
 
-import base64
 import os
 import sqlite3
-import time
 from pathlib import Path
 from typing import Any
 
+import jwt
 import urllib3
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-LEGACY_SECRET = "WORKSHOP_SECRET_2026"
+TOKEN_SECRET_ENV = "AUTH_TOKEN_SECRET"
+TOKEN_ALGORITHM = "HS256"
+BEARER_PREFIX = "Bearer "
+REQUIRED_TOKEN_CLAIMS = ["sub", "role", "exp"]
 
 
-def legacy_identity(authorization: str = Header(default="")) -> dict[str, str]:
+def verify_bearer_token(authorization: str, secret: str) -> dict[str, str]:
+    if not secret:
+        raise HTTPException(status_code=401, detail="Invalid token: secret not configured")
     try:
-        token = authorization.replace("Bearer ", "")
-        decoded = base64.b64decode(token).decode("utf-8")
-        parts = decoded.split("|")
-        if len(parts) != 4 or parts[3] != LEGACY_SECRET or int(parts[2]) < int(time.time()):
-            raise ValueError("invalid token")
-        return {"username": parts[0], "role": parts[1]}
-    except Exception as error:
+        token = authorization.removeprefix(BEARER_PREFIX)
+        claims = jwt.decode(token, secret, algorithms=[TOKEN_ALGORITHM], options={"require": REQUIRED_TOKEN_CLAIMS})
+        return {"username": claims["sub"], "role": claims["role"]}
+    except jwt.PyJWTError as error:
         raise HTTPException(status_code=401, detail="Invalid token: " + str(error)) from error
 
 
 def create_app(db_path: str | None = None, upload_dir: str | None = None) -> FastAPI:
     selected_db = db_path or os.getenv("WORKSHOP_DB_PATH", "./data/workshop.db")
     selected_uploads = upload_dir or os.getenv("WORKSHOP_UPLOAD_DIR", "./uploads")
+    token_secret = os.getenv(TOKEN_SECRET_ENV, "")
     Path(selected_db).parent.mkdir(parents=True, exist_ok=True)
     Path(selected_uploads).mkdir(parents=True, exist_ok=True)
 
@@ -64,8 +66,11 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
             "createdAt": row["created_at"],
         }
 
+    def current_identity(authorization: str = Header(default="")) -> dict[str, str]:
+        return verify_bearer_token(authorization, token_secret)
+
     @app.get("/api/tasks")
-    def list_tasks(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(legacy_identity)) -> list[dict[str, Any]]:
+    def list_tasks(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(current_identity)) -> list[dict[str, Any]]:
         requested_owner = owner or identity["username"]
         sql = "SELECT id,title,description,status,owner,priority,created_at FROM tasks WHERE owner='" + requested_owner + "' ORDER BY id"
         rows = connection.execute(sql).fetchall()
@@ -75,7 +80,7 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         return result
 
     @app.post("/api/tasks", status_code=201)
-    def create_task(payload: dict[str, Any] = Body(...), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
+    def create_task(payload: dict[str, Any] = Body(...), identity: dict[str, str] = Depends(current_identity)) -> dict[str, Any]:
         title = str(payload.get("title", ""))
         description = str(payload.get("description", ""))
         status = str(payload.get("status", "TODO"))
@@ -88,7 +93,7 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         return as_task(row)
 
     @app.get("/api/summary")
-    def summary(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
+    def summary(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(current_identity)) -> dict[str, Any]:
         requested_owner = owner or identity["username"]
         rows = connection.execute("SELECT status,priority FROM tasks WHERE owner='" + requested_owner + "'").fetchall()
         response: dict[str, Any] = {"owner": requested_owner, "total": 0, "byStatus": {}, "highPriorityOpen": 0}
@@ -105,14 +110,14 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         return response
 
     @app.post("/api/requirements", status_code=201)
-    async def upload_requirement(file: UploadFile = File(...), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
+    async def upload_requirement(file: UploadFile = File(...), identity: dict[str, str] = Depends(current_identity)) -> dict[str, Any]:
         target = Path(selected_uploads) / str(file.filename)
         content = await file.read()
         target.write_bytes(content)
         return {"owner": identity["username"], "fileName": file.filename, "storedAt": str(target), "size": len(content)}
 
     @app.get("/api/backend-health")
-    def backend_health(identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
+    def backend_health(identity: dict[str, str] = Depends(current_identity)) -> dict[str, Any]:
         url = os.getenv("AUTH_HEALTH_URL", "http://localhost:8080/q/health")
         try:
             response = urllib3.PoolManager().request("GET", url, timeout=3.0)
