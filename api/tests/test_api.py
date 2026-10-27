@@ -74,6 +74,29 @@ def test_creates_task_and_summary(tmp_path: Path) -> None:
     assert summary.json()["total"] == 3
 
 
+def test_owner_filter_treats_sql_input_as_literal(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        tasks = client.get("/api/tasks", params={"owner": "x' OR '1'='1"}, headers=headers())
+        summary = client.get("/api/summary", params={"owner": "x' OR '1'='1"}, headers=headers())
+    assert tasks.status_code == 200
+    assert tasks.json() == []
+    assert summary.status_code == 200
+    assert summary.json()["total"] == 0
+
+
+def test_create_task_stores_sql_metacharacters_literally(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    payload = {"title": "O'Reilly'); DROP TABLE tasks; --", "description": "d'e", "status": "TODO", "priority": "LOW"}
+    with TestClient(app) as client:
+        created = client.post("/api/tasks", headers=headers(), json=payload)
+        listed = client.get("/api/tasks", headers=headers())
+    assert created.status_code == 201
+    assert created.json()["title"] == payload["title"]
+    assert created.json()["description"] == payload["description"]
+    assert len(listed.json()) == 3
+
+
 def test_uploads_requirement(tmp_path: Path) -> None:
     upload_dir = tmp_path / "uploads"
     app = create_app(str(tmp_path / "workshop.db"), str(upload_dir))

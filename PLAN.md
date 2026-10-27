@@ -226,3 +226,33 @@ cerrado), y rechazo 401 en cada ruta protegida con token forjado o ausente.
 No se ejecutaron CodeQL, Dependency Review ni JaCoCo remotos. Los advisories SCA
 siguen fuera de alcance (H-AUTH-06).
 
+#### Parametrización SQL en `api` (alertas CodeQL `py/sql-injection`)
+
+CodeQL reportó tres alertas High en `api/app/main.py` (consultas de
+`/api/tasks`, `POST /api/tasks` y `/api/summary`). Las tres consultas usan ahora
+placeholders `?` con tupla de parámetros. El comportamiento con entradas
+normales no cambia. Se añadieron dos pruebas: `owner` con `x' OR '1'='1'` no
+devuelve filas, y un `title` con comillas y `DROP TABLE` se guarda como texto.
+Resultado local: `python tools/lab.py test api` pasó con 25 pruebas y cobertura
+93.10%; pyflakes sin hallazgos. No se verificó que las pruebas nuevas fallen
+sobre el código anterior. La alerta se cierra solo cuando CodeQL reanalice el
+nuevo commit.
+
+Limitaciones que siguen abiertas: la política de `owner` en query/payload no
+está resuelta por H-AUTH-03; la raíz de la inyección es H-AUTH-01 (Pendiente).
+
+#### Estrategia de reversión (propuesta)
+
+- Unidad de reversión: los commits de H-AUTH-03 en `feat/h-auth-03-firma-token`.
+  No hay migración de datos, así que revertir no requiere limpieza de base.
+- Revertir solo `api` no es seguro: restaura la aceptación del token Base64 sin
+  firma (vulnerabilidad original). Usarlo solo como contención temporal, con
+  aprobación explícita y registro en `HALLAZGOS.md`.
+- Efecto colateral conocido: con `api` revertido, `web` (que envía el JWT del
+  emisor) dejará de funcionar contra `api`. Ese fallo es esperado y no se debe
+  parchear en `web`.
+- Retirar `PyJWT==2.15.1` de `api/requirements.txt` solo al revertir el commit
+  de la dependencia. `AUTH_TOKEN_SECRET` en `compose.yaml` puede quedar sin usar.
+- Preferencia: corregir hacia adelante (por ejemplo, ajustar la configuración del
+  secreto) antes que revertir.
+
