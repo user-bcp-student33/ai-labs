@@ -174,9 +174,9 @@ Después de la revisión, el usuario eligió `Fix all issues`, ampliando el trab
 a las remediaciones de seguridad señaladas en auth:
 
 - **H-AUTH-03:** se reemplazó el token Base64 por un JWT HS256 con claims
-  `sub`, `role` y `exp`, firmado con HMAC y con secreto externo. H-AUTH-03
-  permanece `Pendiente` hasta verificar que los consumidores validen la firma;
-  su código está fuera del alcance de esta revisión.
+  `sub`, `role` y `exp`, firmado con HMAC y con secreto externo. La verificación
+  del consumidor `api` se implementó después; ver la sección
+  «H-AUTH-03 — Token sin firma (api)».
 - **H-AUTH-04:** se externalizó el secreto con `AUTH_TOKEN_SECRET`, se exige
   una longitud mínima de 32 bytes y CORS se limita a `AUTH_CORS_ORIGINS`, cuyo
   valor predeterminado es el origen local documentado `http://localhost:4200`.
@@ -197,3 +197,65 @@ Las pruebas se ejecutaron con cwd `auth/` y una base SQLite temporal bajo
 | Regresión de token antes de la implementación | `mvn '-Dtest=AuthResourceTest#issuesSignedJwtToken' test` | Falló como se esperaba: el token anterior tenía 1 segmento, no los 3 segmentos JWT requeridos. |
 | Integración enfocada | `mvn -B '-Dtest=AuthResourceTest' test` | Pasó: 13 pruebas, 0 fallos; incluyó firma y claims JWT, CORS permitido/denegado y respuesta de error genérica. |
 | Verificación final | `mvn -B verify` | Pasó: 23 pruebas, 0 fallos. JaCoCo: `AuthResource` 26/26 líneas, `TokenSigner` 23/25; cobertura agregada de las clases de producción modificadas: 49/51 (96.1%). |
+
+### H-AUTH-03 — Token sin firma (api)
+
+Componente: `api`. Spec `HU-01.md`, decisión `ADR-H-AUTH-03.md`, hallazgo
+`HALLAZGOS.md`. Las decisiones se aprobaron en la conversación del día 2: PyJWT,
+retiro del formato Base64 legado, secreto por `AUTH_TOKEN_SECRET` en
+`compose.yaml` con valor de desarrollo, y commit previo de los documentos.
+
+El consumidor verificado es `api`: `main.py` era el único que decodificaba el
+token Base64. `web/src/app/dashboard/dashboard.component.ts:44` solo envía el
+header `Authorization`, y `auth/` solo emite el JWT.
+
+| Etapa | Comando | Resultado |
+|---|---|---|
+| Línea base antes del cambio | `python tools/lab.py test api` | Pasó: 4 pruebas, cobertura 90.18%. |
+| Rojo antes de implementar | `api\.venv\Scripts\python.exe -m pytest -p no:warnings --no-cov tests` (desde `api/`) | 6 fallidas, 17 pasadas. Fallaban el contrato JWT de `auth`, la identidad desde claims, el rechazo del token legado y las rutas seeded que usaban el token nuevo. |
+| Verde tras implementar | `python tools/lab.py test api` | Pasó: 23 pruebas, cobertura total 93.10% (compuerta 85% cumplida). |
+| Lint | `api\.venv\Scripts\python.exe -m pyflakes api\app api\tests` | Sin hallazgos (exit 0). |
+| Contrato real | `auth/target/quarkus-app/quarkus-run.jar` con `AUTH_TOKEN_SECRET` de desarrollo; `POST /auth/login` (`student`) y `api` con la misma variable | `GET /api/tasks` con token real: 200. `GET /api/summary` con token real: 200, `owner` = `student`. `GET /api/backend-health` con token real: 200. Token legado Base64: 401. Sin token: 401. |
+| Compose | `docker compose config` | No ejecutado: Docker no está instalado. Se validó la sintaxis con PyYAML. |
+
+Pruebas añadidas en `api/tests/test_api.py`: aceptación del token del contrato,
+identidad desde claims, rechazo de firma ajena, claims alterados, expiración,
+falta de `role`, `alg: none`, token legado, ausencia de secreto (falla
+cerrado), y rechazo 401 en cada ruta protegida con token forjado o ausente.
+
+No se ejecutaron CodeQL, Dependency Review ni JaCoCo remotos. Los advisories SCA
+siguen fuera de alcance (H-AUTH-06).
+
+#### Parametrización SQL en `api` (alertas CodeQL `py/sql-injection`)
+
+CodeQL reportó tres alertas High en `api/app/main.py` (consultas de
+`/api/tasks`, `POST /api/tasks` y `/api/summary`). Las tres consultas usan ahora
+placeholders `?` con tupla de parámetros. El comportamiento con entradas
+normales no cambia. Por la política de `owner` aprobada, `/api/tasks`,
+`POST /api/tasks` y `/api/summary` usan siempre la identidad del token: `?owner=`
+y el campo `owner` del payload se ignoran. Se añadieron dos pruebas: `?owner=`
+con `x' OR '1'='1'` y un payload con `owner` ajeno no cambian el resultado; un
+`title` con comillas y `DROP TABLE` se guarda como texto. Resultado local:
+`python tools/lab.py test api` pasó con 25 pruebas y cobertura 92.98%; pyflakes
+sin hallazgos. No se verificó que las pruebas nuevas fallen sobre el código
+anterior. La alerta se cierra solo cuando CodeQL reanalice el nuevo commit.
+
+Limitaciones que siguen abiertas: la raíz de la inyección es H-AUTH-01
+(Pendiente). `web` todavía envía `?owner=`, que ahora se ignora; limpiarlo es un
+cambio separado en `web`.
+
+#### Estrategia de reversión (propuesta)
+
+- Unidad de reversión: los commits de H-AUTH-03 en `feat/h-auth-03-firma-token`.
+  No hay migración de datos, así que revertir no requiere limpieza de base.
+- Revertir solo `api` no es seguro: restaura la aceptación del token Base64 sin
+  firma (vulnerabilidad original). Usarlo solo como contención temporal, con
+  aprobación explícita y registro en `HALLAZGOS.md`.
+- Efecto colateral conocido: con `api` revertido, `web` (que envía el JWT del
+  emisor) dejará de funcionar contra `api`. Ese fallo es esperado y no se debe
+  parchear en `web`.
+- Retirar `PyJWT==2.15.1` de `api/requirements.txt` solo al revertir el commit
+  de la dependencia. `AUTH_TOKEN_SECRET` en `compose.yaml` puede quedar sin usar.
+- Preferencia: corregir hacia adelante (por ejemplo, ajustar la configuración del
+  secreto) antes que revertir.
+
