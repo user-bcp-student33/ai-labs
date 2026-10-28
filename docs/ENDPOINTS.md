@@ -204,11 +204,11 @@ los cuerpos se comprueban en
   32 bytes (`auth/src/main/resources/application.properties:9`;
   `auth/src/main/java/com/bcp/workshop/auth/TokenSigner.java:28-36`). No
   incluyas la clave en el cliente ni en el repositorio.
-- En el código de `auth/` se emite el token, pero no se implementa un endpoint
-  de validación. No se inspeccionaron los componentes consumidores; antes de
-  confiar en el token para autorizar solicitudes, el consumidor debe verificar
-  firma y expiración. HALLAZGOS.md registra esta verificación externa como
-  pendiente en H-AUTH-03.
+- En `auth/` se emite el token, pero no se implementa un endpoint de
+  validación. El consumidor `api` verifica la firma HS256 con `AUTH_TOKEN_SECRET`,
+  exige `sub`, `role` y `exp`, y rechaza el token si el secreto no está
+  configurado (`api/app/main.py`, `verify_bearer_token`). `web` solo reenvía el
+  token en `Authorization`. HALLAZGOS.md registra H-AUTH-03 como resuelto.
 - La respuesta `401` incluye el username proporcionado en `message`; evita
   mostrar ese detalle directamente a usuarios finales si no es necesario.
 - `debug` es un campo heredado presente en la respuesta observada. No representa
