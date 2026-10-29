@@ -127,6 +127,48 @@ def test_accepts_token_issued_by_auth_contract(tmp_path: Path) -> None:
     assert status_for_tasks(tmp_path, token()) == 200
 
 
+# Caracterización (G1): documenta la aceptación actual sin prefijo Bearer; no es un requisito aprobado.
+def test_characterizes_token_accepted_without_bearer_prefix(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks", headers={"Authorization": token()})
+    assert response.status_code == 200
+
+
+# Caracterización (G3): documenta la aceptación actual de un secreto menor de 32 bytes.
+def test_characterizes_token_accepted_with_short_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    short_secret = "short-test-secret"
+    monkeypatch.setenv("AUTH_TOKEN_SECRET", short_secret)
+    short_token = build_token({"sub": "student", "role": "STUDENT", "exp": expires_at()}, secret=short_secret)
+    assert status_for_tasks(tmp_path, short_token) == 200
+
+
+# Caracterización (G4): documenta la aceptación actual de un sub vacío.
+def test_characterizes_token_accepted_with_empty_subject(tmp_path: Path) -> None:
+    empty_subject = build_token({"sub": "", "role": "STUDENT", "exp": expires_at()})
+    assert status_for_tasks(tmp_path, empty_subject) == 200
+
+
+# Caracterización (G4): PyJWT rechaza un sub numérico ("Subject must be a string"); el diseño esperaba 200.
+def test_characterizes_token_rejected_with_numeric_subject(tmp_path: Path) -> None:
+    numeric_subject = build_token({"sub": 42, "role": "STUDENT", "exp": expires_at()})
+    assert status_for_tasks(tmp_path, numeric_subject) == 401
+
+
+# Fixture fija con el formato de TokenSigner (HS256, sub/role/exp) firmada con TEST_SECRET; exp lejano para no depender del reloj.
+AUTH_ISSUED_TOKEN = ".".join(
+    [
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        "eyJzdWIiOiJzdHVkZW50Iiwicm9sZSI6IlNUVURFTlQiLCJleHAiOjQxMDI0NDQ4MDB9",
+        "KlBO6GvjP4DdmrmFsrsjwUiNl3UTIkiXLqf6DYZ7FF4",
+    ]
+)
+
+
+def test_accepts_fixed_auth_issued_token_fixture(tmp_path: Path) -> None:
+    assert status_for_tasks(tmp_path, AUTH_ISSUED_TOKEN) == 200
+
+
 def test_identity_comes_from_verified_claims(tmp_path: Path) -> None:
     app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
     with TestClient(app) as client:
