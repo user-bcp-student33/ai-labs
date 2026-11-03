@@ -24,3 +24,29 @@ Este resumen describe el comportamiento del codigo; no sustituye un contrato aco
 | H-API-05 | api | Manejo de errores amplio y contratos poco tipados | Vulnerabilidad | Resuelto: errores de autenticacion y health no exponen excepciones, requests/responses usan modelos Pydantic, el resumen evita condicionales anidados y las pruebas verifican campos, valores, resumen vacio y estados repetidos/cerrados. | `api/app/main.py:22`, `api/app/main.py:30`, `api/app/main.py:32`, `api/app/services.py:43`, `api/app/services.py:48`, `api/app/services.py:50`, `api/app/schemas.py:10`, `api/app/schemas.py:25`, `api/app/schemas.py:35`, `api/app/routes.py:25`, `api/app/routes.py:32`, `api/app/routes.py:39`, `api/tests/test_api.py:48`, `api/tests/test_api.py:49`, `api/tests/test_api.py:199` | media | Resuelto |
 | H-API-06 | api | Dependencias fijadas requieren verificacion SCA | Sugerencia | El manifiesto fija `urllib3` y `python-multipart` en las versiones enumeradas por el reto. El manifiesto confirma esas versiones, pero no demuestra por si solo un CVE aplicable; la revision de advisories y la decision de actualizar o remover siguen pendientes. | `api/requirements.txt:4`, `api/requirements.txt:5` | baja | Aprobado |
 | H-API-07 | api | Rutas, persistencia, reglas y serializacion concentradas en un modulo | Refactor | `create_app` inicializa SQLite y las rutas ejecutan consultas, aplican reglas y forman respuestas en `api/app/main.py`. Esta concentracion acopla HTTP y persistencia y eleva el costo y riesgo de cambiar o probar cada responsabilidad por separado. Resuelto: `main.py` compone el router, servicios y repositorio; SQL, reglas y handlers quedaron separados y la caracterizacion de aislamiento pasa. | `api/app/main.py:35`, `api/app/main.py:41`, `api/app/main.py:51`, `api/app/repositories.py:15`, `api/app/repositories.py:35`, `api/app/services.py:24`, `api/app/routes.py:17` | baja | Resuelto |
+
+### Candidatos de discovery pendientes de revision humana
+
+#### H-API-08 - CORS permite cualquier origen con credenciales habilitadas
+- Estado: CANDIDATO
+- Evidencia: `api/app/main.py:55-59` configura `allow_origins=["*"]` y `allow_credentials=True`. Reproduccion local con `OPTIONS /api/tasks`, `Origin: https://untrusted.example` y solicitud preflight: respuesta `200`, `Access-Control-Allow-Origin: https://untrusted.example` y `Access-Control-Allow-Credentials: true`.
+- Impacto: cualquier origen queda habilitado para leer respuestas CORS cuando el navegador envia credenciales compatibles. Las rutas requieren `Authorization` Bearer, por lo que esta configuracion por si sola no demuestra acceso sin autenticar; amplia la confianza entre origenes y debe contrastarse con el modelo de credenciales del cliente.
+- Prioridad propuesta: baja.
+- Contrato potencialmente afectado: politica de origenes autorizados para los endpoints `/api/*`.
+- Como validarlo: repetir el preflight desde un origen no autorizado y verificar los headers; acordar una lista de origenes permitidos y comprobar que un origen externo no reciba autorizacion CORS.
+
+#### H-API-09 - POST /api/tasks acepta campos mal formados y crea registros con valores degradados
+- Estado: CANDIDATO
+- Evidencia: `api/app/schemas.py:10-22` permite propiedades adicionales, da valores vacios por defecto y convierte a texto cualquier valor de `title`, `description`, `status`, `priority` y `owner`; `api/app/services.py:32-40` persiste esos campos conocidos. Reproduccion local: `POST /api/tasks` con `{"titel":"intended title","status":["TODO"],"priority":null}` respondio `201`, con `title` vacio, `status` convertido a `"['TODO']"` y `priority` convertido a `"None"`.
+- Impacto: errores de nombre de campo y tipos JSON incorrectos pueden parecer exitosos al cliente y dejar datos incompletos o estados que no coinciden con las reglas de resumen.
+- Prioridad propuesta: media.
+- Contrato potencialmente afectado: esquema de entrada de `POST /api/tasks`, en particular obligatoriedad de titulo/descripcion, tipos permitidos y rechazo de propiedades desconocidas.
+- Como validarlo: enviar propiedades mal escritas, listas, objetos, `null` y cadenas vacias; acordar los casos invalidos y comprobar que se rechacen con `422` sin crear filas.
+
+#### H-API-10 - Pruebas de aislamiento aceptan errores internos como rechazo de autorizacion
+- Estado: CANDIDATO
+- Evidencia: `api/tests/test_api.py:157-161`, `api/tests/test_api.py:219-221` y `api/tests/test_api.py:247-253` consideran correcta cualquier respuesta distinta de `200`/`201`, incluso un `500`, sin verificar un codigo de rechazo acordado ni un cuerpo que pruebe el aislamiento.
+- Impacto: una regresion que rompa el endpoint puede hacer pasar estas aserciones sin demostrar que la autorizacion funciono; la suite no distingue rechazo correcto de fallos de servidor.
+- Prioridad propuesta: baja.
+- Contrato potencialmente afectado: respuestas de acceso no autorizado para lectura, resumen y creacion de tareas entre propietarios.
+- Como validarlo: hacer que cada caso reciba una respuesta `500` y comprobar que la asercion actual pasa; despues de acordar el contrato, exigir el codigo/cuerpo esperado y comprobar que `500` falle la prueba.
