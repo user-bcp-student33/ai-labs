@@ -1,0 +1,34 @@
+{
+  "case_id": "caso-01",
+  "service": "transferencias",
+  "error_code": "TRF_TIMEOUT",
+  "correlation_id": "TRX-DEMO-101",
+  "first_seen": "2026-11-03T14:00:05Z",
+  "last_seen": "2026-11-03T14:00:12Z",
+  "occurrences": 2,
+  "priority": "P2",
+  "summary": "La respuesta del servicio core excedio el tiempo permitido; el ultimo estado observado es PENDING.",
+  "impact": "La transferencia TRX-DEMO-101 permanece PENDING en el ultimo evento observado; el log no confirma el resultado final.",
+  "evidence": [
+    {
+      "file": "caso-01-transferencias.log",
+      "line": 1,
+      "text": "2026-11-03T09:00:00-05:00 INFO service=transferencias correlation_id=TRX-DEMO-101 event_id=evt-101 received amount=120.00 currency=PEN account=[REDACTADO]"
+    },
+    {
+      "file": "caso-01-transferencias.log",
+      "line": 2,
+      "text": "2026-11-03T09:00:05-05:00 ERROR service=transferencias correlation_id=TRX-DEMO-101 event_id=evt-102 code=TRF_TIMEOUT upstream=core-demo timeout_ms=5000 status=PENDING token=[REDACTADO]"
+    },
+    {
+      "file": "caso-01-transferencias.log",
+      "line": 4,
+      "text": "2026-11-03T09:00:12-05:00 ERROR service=transferencias correlation_id=TRX-DEMO-101 event_id=evt-103 code=TRF_TIMEOUT upstream=core-demo timeout_ms=5000 status=PENDING account=[REDACTADO]"
+    }
+  ],
+  "missing_data": [
+    "El resultado final de la transferencia no aparece en el log.",
+    "La causa del timeout no esta indicada."
+  ],
+  "recommended_action": "Consultar el estado final de TRX-DEMO-101 en el sistema core y confirmar el siguiente paso con operaciones antes de indicar un reintento."
+}
