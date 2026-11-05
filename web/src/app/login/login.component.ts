@@ -1,64 +1,127 @@
+// login.component.ts
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  EventEmitter,
+  inject,
+  Output,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { HttpErrorResponse } from '@angular/common/http';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { finalize } from 'rxjs';
 import { Router } from '@angular/router';
-import axios from 'axios';
-import merge from 'lodash/merge';
+import { AuthApiService, LoginResponse } from './auth-api.service';
+
+type LoginState = 'empty' | 'loading' | 'success' | 'error';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, ReactiveFormsModule],
   templateUrl: './login.component.html',
-  styleUrl: './login.component.css'
+  styleUrl: './login.component.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LoginComponent {
-  username: any = '';
-  password: any = '';
-  busy: any = false;
-  message: any = '';
-  preferences: any = { theme: 'light', showTips: true, compact: false };
+  @Output() readonly authenticated = new EventEmitter<LoginResponse>();
 
-  constructor(private router: Router) {
-    try {
-      const saved = JSON.parse(localStorage.getItem('workshop_preferences') || '{}');
-      this.preferences = merge(this.preferences, saved);
-    } catch (error) {
-      console.log('Preferences could not be loaded', error);
-    }
+  private readonly formBuilder = inject(FormBuilder);
+  private readonly authApi = inject(AuthApiService);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly router = inject(Router);
+
+  readonly form = this.formBuilder.nonNullable.group({
+    username: ['', Validators.required],
+    password: ['', Validators.required],
+  });
+
+  state: LoginState = 'empty';
+  isSubmitting = false;
+  submitted = false;
+  errorMessage = '';
+  successUsername = '';
+
+  get usernameControl() {
+    return this.form.controls.username;
   }
 
-  async login(): Promise<void> {
-    this.message = '';
-    if (this.username === null || this.username === undefined || String(this.username).trim() === '') {
-      this.message = '<strong>Ingrese un usuario.</strong>';
-    } else {
-      if (this.password === null || this.password === undefined || String(this.password).trim() === '') {
-        this.message = '<strong>Ingrese una contraseña.</strong>';
-      } else {
-        this.busy = true;
-        try {
-          const response: any = await axios.post(
-            'http://localhost:8080/auth/login',
-            { username: this.username, password: this.password, client: 'angular-workshop' },
-            { timeout: 5000 }
-          );
-          if (response && response.data && response.data.token) {
-            localStorage.setItem('workshop_token', response.data.token);
-            localStorage.setItem('workshop_user', JSON.stringify(response.data.user));
-            localStorage.setItem('workshop_preferences', JSON.stringify(this.preferences));
-            await this.router.navigate(['/dashboard']);
-          } else {
-            this.message = '<strong>El backend respondió sin token.</strong>';
-          }
-        } catch (error: any) {
-          const backendMessage = error?.response?.data?.message || error?.message || 'Error desconocido';
-          this.message = '<strong>No se pudo autenticar a ' + this.username + '.</strong><br>' + backendMessage;
-          console.error(error);
-        } finally {
-          this.busy = false;
-        }
-      }
+  get passwordControl() {
+    return this.form.controls.password;
+  }
+
+  submit(): void {
+    if (this.isSubmitting) {
+      return;
     }
+
+    this.submitted = true;
+    this.errorMessage = '';
+
+    if (this.form.invalid) {
+      this.form.markAllAsTouched();
+      this.state = 'error';
+      this.errorMessage = 'Revisa los campos indicados antes de continuar.';
+      return;
+    }
+
+    const credentials = this.form.getRawValue();
+
+    this.isSubmitting = true;
+    this.state = 'loading';
+    this.successUsername = '';
+
+    this.authApi
+      .login(credentials)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => {
+          this.isSubmitting = false;
+        }),
+      )
+      .subscribe({
+        next: (response) => {
+          this.state = 'success';
+          this.successUsername = response.user.username;
+          this.submitted = false;
+          this.form.controls.password.reset('');
+          localStorage.setItem('workshop_token', response.token);
+          localStorage.setItem('workshop_user', JSON.stringify(response.user));
+          this.authenticated.emit(response);
+          void this.router.navigate(['/dashboard']);
+        },
+        error: (error: unknown) => {
+          this.state = 'error';
+          this.errorMessage = this.getErrorMessage(error);
+        },
+      });
+  }
+
+  onCredentialsChanged(): void {
+    if (this.isSubmitting) {
+      return;
+    }
+
+    this.errorMessage = '';
+    this.successUsername = '';
+    this.state = 'empty';
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (!(error instanceof HttpErrorResponse)) {
+      return 'No se pudo completar el inicio de sesión. Inténtalo de nuevo.';
+    }
+
+    if (error.status === 401) {
+      return 'Usuario o contraseña incorrectos. Verifica los datos e inténtalo de nuevo.';
+    }
+
+    if (error.status === 0) {
+      return 'No se pudo conectar con el servicio. Inténtalo de nuevo.';
+    }
+
+    return 'No se pudo completar el inicio de sesión. Inténtalo de nuevo.';
   }
 }
