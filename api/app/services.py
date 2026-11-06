@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import urllib3
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 
 from app.repositories import TaskRepository
 from app.schemas import (
@@ -18,6 +18,7 @@ from app.schemas import (
 
 
 HEALTH_CHECK_UNAVAILABLE_DETAIL = "Health check unavailable"
+OWNER_ACCESS_DENIED_DETAIL = "Owner access denied"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -27,10 +28,12 @@ class TaskService:
 
     def list_tasks(self, owner: str | None, identity: dict[str, str]) -> list[TaskResponse]:
         requested_owner = owner or identity["username"]
+        self._validate_owner_access(requested_owner, identity)
         return [self._as_task(row) for row in self._repository.list_by_owner(requested_owner)]
 
     def create_task(self, payload: TaskCreate, identity: dict[str, str]) -> TaskResponse:
         owner = str(payload.owner) if "owner" in payload.model_fields_set else identity["username"]
+        self._validate_owner_access(owner, identity)
         row = self._repository.create(
             title=payload.title,
             description=payload.description,
@@ -42,6 +45,7 @@ class TaskService:
 
     def summary(self, owner: str | None, identity: dict[str, str]) -> SummaryResponse:
         requested_owner = owner or identity["username"]
+        self._validate_owner_access(requested_owner, identity)
         response = SummaryResponse(owner=requested_owner)
         for row in self._repository.summary_rows(requested_owner):
             response.total += 1
@@ -49,6 +53,11 @@ class TaskService:
             if row["priority"] == "HIGH" and row["status"] not in {"DONE", "ARCHIVED"}:
                 response.high_priority_open += 1
         return response
+
+    @staticmethod
+    def _validate_owner_access(owner: str, identity: dict[str, str]) -> None:
+        if owner != identity["username"]:
+            raise HTTPException(status_code=403, detail=OWNER_ACCESS_DENIED_DETAIL)
 
     @staticmethod
     def _as_task(row: sqlite3.Row) -> TaskResponse:
@@ -68,12 +77,14 @@ class RequirementService:
         self._upload_dir = upload_dir
 
     async def upload(self, file: UploadFile, username: str) -> RequirementResponse:
-        target = self._upload_dir / str(file.filename)
+        file_name = file.filename or ""
+        safe_file_name = PurePosixPath(file_name.replace("\\", "/")).name
+        target = self._upload_dir / safe_file_name
         content = await file.read()
         target.write_bytes(content)
         return RequirementResponse(
             owner=username,
-            fileName=file.filename,
+            fileName=file_name,
             storedAt=str(target),
             size=len(content),
         )

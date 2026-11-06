@@ -148,17 +148,20 @@ def test_list_tasks_with_empty_owner_uses_token_identity(api_client: TestClient)
     assert {task["owner"] for task in response.json()} == {"student"}
 
 
-def test_list_tasks_unknown_owner_returns_empty_list(api_client: TestClient) -> None:
-    response = api_client.get("/api/tasks?owner=missing", headers=headers())
+def test_list_tasks_with_matching_owner_uses_selected_owner(api_client: TestClient) -> None:
+    response = api_client.get("/api/tasks?owner=student", headers=headers())
     assert response.status_code == 200
-    assert response.json() == []
+    assert {task["owner"] for task in response.json()} == {"student"}
+
+
+def test_list_tasks_rejects_unknown_owner(api_client: TestClient) -> None:
+    response = api_client.get("/api/tasks?owner=missing", headers=headers())
+    assert response.status_code == 403
 
 
 def test_list_tasks_rejects_cross_owner_access(api_client: TestClient) -> None:
     response = api_client.get("/api/tasks?owner=trainer", headers=headers())
-    assert response.status_code != 200 or all(
-        task["owner"] == "student" for task in response.json()
-    )
+    assert response.status_code == 403
 
 
 def test_list_tasks_requires_authentication(api_client: TestClient) -> None:
@@ -185,15 +188,9 @@ def test_summary_counts_statuses_and_high_priority_tasks(api_client: TestClient)
     }
 
 
-def test_summary_unknown_owner_returns_zero_counts(api_client: TestClient) -> None:
+def test_summary_rejects_unknown_owner(api_client: TestClient) -> None:
     response = api_client.get("/api/summary?owner=missing", headers=headers())
-    assert response.status_code == 200
-    assert response.json() == {
-        "owner": "missing",
-        "total": 0,
-        "byStatus": {},
-        "highPriorityOpen": 0,
-    }
+    assert response.status_code == 403
 
 
 def test_summary_counts_repeated_states_and_excludes_closed_high_priority(
@@ -218,7 +215,7 @@ def test_summary_counts_repeated_states_and_excludes_closed_high_priority(
 
 def test_summary_rejects_cross_owner_access(api_client: TestClient) -> None:
     response = api_client.get("/api/summary?owner=trainer", headers=headers())
-    assert response.status_code != 200 or response.json()["owner"] == "student"
+    assert response.status_code == 403
 
 
 def test_summary_requires_authentication(api_client: TestClient) -> None:
@@ -250,7 +247,7 @@ def test_create_task_rejects_owner_override(api_client: TestClient) -> None:
         headers=headers(),
         json={"title": "Other owner", "owner": "trainer"},
     )
-    assert response.status_code != 201 or response.json()["owner"] == "student"
+    assert response.status_code == 403
 
 
 def test_create_task_without_body_returns_validation_error(api_client: TestClient) -> None:
