@@ -130,3 +130,39 @@ Cobertura diferencial del diff no medida; no se modifico codigo de produccion en
 - Tras implementar H-API-02, repetir los tres tests de propietario y exigir que no se lea ni cree información ajena, manteniendo el status acordado en el contrato.
 - Tras implementar H-API-04, repetir el test de confinamiento; cuando se acuerden extensión y tamaño, añadir casos sin extensión y justo debajo/en/encima del máximo.
 - Tras implementar H-API-01, añadir casos JWT firmado valido y de firma, issuer, audience, expiracion y claims invalidas.
+
+## Pruebas de autenticacion
+
+Componente: `auth`. Casos de caracterizacion de `POST /auth/login` en `auth/src/test/java/com/bcp/workshop/auth/AuthResourceTest.java`.
+
+| caso | comportamiento protegido | resultado antes del cambio funcional |
+|---|---|---|
+| `logsInWithWorkshopUser` | Login valido mantiene `200`, `expiresIn`, `user.username`, `user.displayName`, `user.role`, `token` y `debug`. | PASO. |
+| `rejectsIncorrectPasswordWithoutToken` | Credencial incorrecta responde `401` y no devuelve `token`. | PASO. |
+| `rejectsSqlInjectionInUsernameWithoutToken` | Inyeccion en `username` debe responder `401` y no devolver `token`. | FALLO esperado: responde `200` y devuelve token. |
+| `rejectsSqlInjectionInPasswordWithoutToken` | Inyeccion en `password` debe responder `401` y no devolver `token`. | FALLO esperado: responde `200` y devuelve token. |
+
+Ejecucion desde `auth/`:
+
+```text
+mvn -q "-Dtest=AuthResourceTest#logsInWithWorkshopUser+rejectsIncorrectPasswordWithoutToken" -Dquarkus.http.test-port=18081 test
+Resultado: 2 pruebas, ambas pasan.
+
+mvn -q -Dtest=AuthResourceTest -Dquarkus.http.test-port=18081 test
+Resultado: 4 pruebas; 2 pasan y 2 fallan. Los dos intentos de inyeccion reciben 200 con token, reproduciendo H-AUTH-01 antes de modificar la consulta.
+```
+
+Se usa el puerto de test `18081` porque el primer intento con el puerto predeterminado `8081` no pudo iniciar Quarkus: ya estaba ocupado. No se modifico la implementacion de produccion ni el contrato HTTP.
+
+Validacion despues de parametrizar la consulta:
+
+```text
+Desde auth/: mvn -q -Dtest=AuthResourceTest -Dquarkus.http.test-port=18081 test
+Resultado: 4 pruebas, 0 fallos, 0 errores.
+
+Desde la raiz: QUARKUS_HTTP_TEST_PORT=18081 python tools/lab.py test auth
+Resultado: BUILD SUCCESS; 4 pruebas, 0 fallos, 0 errores; se genero el informe JaCoCo en auth/target/site/jacoco/.
+Cobertura JaCoCo de findByCredentials: 12/13 lineas (92,3%); clase LegacyDatabase: 21/24 lineas (87,5%).
+```
+
+El comando del runner sin puerto alternativo no pudo iniciar Quarkus porque `8081` estaba ocupado; se repitio sin detener ese proceso y la suite completa paso.
